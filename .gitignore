@@ -1,0 +1,4 @@
+/.data
+/ansible/hosts
+!/ansible/hosts/.keepme
+

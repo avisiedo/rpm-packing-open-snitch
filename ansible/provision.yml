@@ -1,0 +1,100 @@
+# This ansible script automate the creation of a VM and necessary steps
+# to create the necessary RPM packages for open snitch, that could include
+# additional golang packages required by the repository.
+---
+- name: Create and provision Fedora VM
+  hosts: localhost
+  become: false
+  gather_facts: no
+
+  vars:
+    fedora_version: "41"
+    fedora_arch: "x86_64"
+    fedora_image: "Fedora-Cloud-Base-Generic-{{ fedora_version }}-1.4.{{ fedora_arch }}.qcow2"
+    fedora_image_url: "https://download.fedoraproject.org/pub/fedora/linux/releases/{{ fedora_version }}/Cloud/{{ fedora_arch }}/images/{{ fedora_image }}"
+    vm_name: fedora-vm
+    vm_disk_path: /home/avisiedo/VirtualMachines
+    rpm_packages:
+      - htop
+      - git
+      - golang
+      - fedpkg
+
+  tasks:
+    - name: Check if {{ fedora_image }} exists
+      ansible.builtin.stat:
+        path: "{{ vm_disk_path }}/{{ fedora_image }}"
+      register: fedora_image_exists
+
+    - name: Download Image
+      ansible.builtin.uri:
+        url: "{{ fedora_image_url }}"
+        follow_redirects: true
+        method: GET
+        return_content: no
+        dest: "{{ vm_disk_path }}/{{ fedora_image }}"
+        mode: '0644'
+        status_code: [200]
+        timeout: 10
+        use_netrc: false
+        validate_certs: true
+      when: not fedora_image_exists.stat.exists
+
+    - name: Create VM
+      community.libvirt.virt:
+        command: define
+        name: "{{ vm_name }}"
+        cpu: 2
+        memory: 4096
+        vcpus: 2
+        disk:
+          - size: 20
+            path: "{{ vm_disk_path }}/{{ fedora_image }}"
+            type: qcow2
+        network:
+          - type: bridge
+            source: virbr0
+        os:
+          type: linux
+          distro: fedora
+          version: 41
+          # uri: qemu:///system
+        uri: qemu:///user
+      register: vm
+
+    - name: Abort execution
+      fail:
+        msg: Aborting execution
+
+    - name: Wait for VM to become available
+      uri:
+        url: "https://{{ vm.server.public_v4 }}:{{ vm.server.metadata.port }}"
+        status: 200
+      until: true
+      retries: 10
+      delay: 10
+
+    - name: Create inventory file
+      template:
+        src: templates/inventory.j2
+        dest: inventory/hosts
+        mode: '0644'
+      vars:
+        vm_name: "{{ vm_name }}"
+        vm_ip: "{{ vm.server.public_v4 }}"
+        vm_user: "fedora"
+        vm_password: "your_password"
+
+#   - name: Provision VM with RPMs
+#     hosts: "{{ vm_name }}"
+#     become: true
+#     become_method: sudo
+#     #gather_facts: yes
+#     gather_facts: no
+# 
+#     tasks:
+#     - name: Install RPMs
+#       ansible.builtin.dnf:
+#         name: "{{ rpm_packages }}"
+#         state: present
+
